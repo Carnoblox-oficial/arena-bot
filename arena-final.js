@@ -1,49 +1,46 @@
+// arena-final.js - Arena do Chat V1.0 FIX RAILWAY + CELULAR
 const { Client, LocalAuth } = require('whatsapp-web.js');
-
-const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: {
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
-        headless: true
-    }
-});
-
-client.on('qr', (qr) => {
-    // ISSO RESOLVE O QR ESTICADO - GERA UM LINK
-    const link = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(qr)}`;
-    console.log('=================================');
-    console.log('ESCANEIA ESSE LINK NO NAVEGADOR:');
-    console.log(link);
-    console.log('=================================');
-});
-
-client.on('ready', () => {
-    console.log('✅ BOT ARENA CONECTADO COM SUCESSO!');
-});
-
-client.on('message', async msg => {// arena-final.js - Arena do Chat V1.0
-// npm i whatsapp-web.js qrcode-terminal
-
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 
-const client = new Client({ authStrategy: new LocalAuth(), puppeteer: { args: ['--no-sandbox'] } });
+const client = new Client({
+  authStrategy: new LocalAuth(),
+  puppeteer: {
+    headless: true,
+    args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu']
+  }
+});
 
 let partida = null;
-let bloqueios = {}; // { numero: timestamp_desbloqueio }
-let denuncias = {}; // { alvo: { qtd: 0, por: {} } }
+let bloqueios = {};
+let denuncias = {};
 
 function estaBloqueado(id){ return bloqueios[id] && Date.now() < bloqueios[id]; }
 
-client.on('qr', qr => qrcode.generate(qr, {small: true}));
+client.on('qr', qr => {
+    // FIX CELULAR: Gera link clicável em vez de bloquinho
+    const link = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qr)}`;
+    console.log('=================================');
+    console.log('LINK DO QR - ABRE NO SEU QUETTA:');
+    console.log(link);
+    console.log('=================================');
+
+    // TENTA GERAR CÓDIGO DE PAREAMENTO TAMBÉM (SEM QR)
+    setTimeout(async () => {
+        try {
+            // TROQUE AQUI PELO SEU NUMERO COM 55 + DDD
+            const NUMERO = '5573999751654'; // <--- TROCA AQUI
+            const code = await client.requestPairingCode(NUMERO);
+            console.log('SEU CÓDIGO DE PAREAMENTO: ' + code);
+            console.log('WHATSAPP > APARELHOS > CONECTAR COM NUMERO');
+        } catch(e) {}
+    }, 5000);
+});
+
 client.on('ready', () => console.log('Arena online!'));
 
 client.on('message', async msg => {
   const chat = await msg.getChat();
   if(!chat.isGroup) {
-    // RECEBE FILME NO PV - REGRA 2
     if(partida && partida.jogadores[msg.from]) {
       if(msg.body.includes('|')){
         let [nome, emoji] = msg.body.split('|').map(s=>s.trim());
@@ -59,30 +56,26 @@ client.on('message', async msg => {
     return;
   }
 
-  // COMANDO!iniciar X Y
   if(msg.body.startsWith('!iniciar')){
     let [_, pontos, espera] = msg.body.split(' ');
     pontos = parseInt(pontos) || 10;
     espera = parseInt(espera) || 2;
-
     if(estaBloqueado(msg.author)) return msg.reply('🚫 Você está bloqueado de iniciar por 12h');
-
-    // REGRA 4 - ANTI-BAGUNÇA: 30 60
     if(pontos >= 30 || espera >= 60){
       let poll = await chat.sendMessage('⚠️ Partida absurda detectada', {
         poll: { name: `Cancelar!iniciar ${pontos} ${espera} de @${msg.author.split('@')[0]}?`, options: ['Sim, cancelar', 'Não'], selectableCount: 1 }
       });
-      // Aguarda 2 min e conta 50%+ ONLINE
       setTimeout(async () => {
-        let online = chat.participants.length; // simplificado, ideal contar com presence
-        let votos = await poll.getVotes(); // pega votos SIM
-        // se 50%+ votarem SIM
-        if(votos[0] >= online*0.5){
-          bloqueios[msg.author] = Date.now() + 12*60*60*1000;
-          chat.sendMessage(`🚫 Partida cancelada. @${msg.author.split('@')[0]} bloqueado 12h`);
-        } else {
-          iniciarInscricao(pontos, espera, chat);
-        }
+        let online = chat.participants.length;
+        try {
+            let result = await poll.getVotes();
+            if(result && result[0] >= online*0.5){
+              bloqueios[msg.author] = Date.now() + 12*60*60*1000;
+              chat.sendMessage(`🚫 Partida cancelada. @${msg.author.split('@')[0]} bloqueado 12h`);
+            } else {
+              iniciarInscricao(pontos, espera, chat);
+            }
+        } catch { iniciarInscricao(pontos, espera, chat); }
       }, 2*60*1000);
       return;
     }
@@ -98,35 +91,31 @@ client.on('message', async msg => {
     }
   }
 
-  //!denu
   if(msg.body.startsWith('!denu')){
     let alvo = msg.mentionedIds[0];
     if(!alvo) return;
-    if(alvo === msg.author){ // auto-denuncia = expulsão instantânea
+    if(alvo === msg.author){
       expulsar(alvo, chat, 'auto-denuncia');
       return;
     }
-    // 1x a cada 5 min
     if(denuncias[msg.author] && Date.now() - denuncias[msg.author].ultima < 5*60*1000) return msg.reply('Aguarde 5min pra denunciar de novo');
-
     denuncias[alvo] = denuncias[alvo] || { qtd: 0, por: {} };
     denuncias[alvo].qtd++;
     denuncias[alvo].por[msg.author] = true;
-
     let poll = await chat.sendMessage(`Votação: Expulsar @${alvo.split('@')[0]}?`, {
       poll: { name: `Expulsar ${alvo.split('@')[0]}?`, options: ['Sim', 'Não'] }
     });
-
     setTimeout(async () => {
-      let votos = await poll.getVotes();
-      let sim = votos[0] || 0;
-      let total = chat.participants.length -1;
-      // 4ª denuncia e <50%
-      if(denuncias[alvo].qtd >= 4 && sim/total < 0.5){
-        expulsar(msg.author, chat, 'denuncia abusiva'); // quem denunciou é expulso
-      } else if(sim/total >= 0.51){
-        expulsar(alvo, chat, 'votação');
-      }
+      try {
+        let votos = await poll.getVotes();
+        let sim = votos[0] || 0;
+        let total = chat.participants.length -1;
+        if(denuncias[alvo].qtd >= 4 && sim/total < 0.5){
+          expulsar(msg.author, chat, 'denuncia abusiva');
+        } else if(sim/total >= 0.51){
+          expulsar(alvo, chat, 'votação');
+        }
+      } catch {}
     }, 2*60*1000);
   }
 });
@@ -135,10 +124,8 @@ async function iniciarInscricao(pontosVitoria, espera, chat){
   partida = { pontosVitoria, espera, grupoId: chat.id._serialized, jogadores: {}, fila: [], desclassificados: {}, expulsos: {}, indiceVez: 0, acertos: {} };
   let enquete = await chat.sendMessage('🎮 NOVA ARENA!', { poll: { name: 'Quem vai jogar?', options: ['Eu vou!'] } });
   chat.sendMessage(`Digite!entrar pra participar. Inscrição encerra em ${espera}min. Meta: ${pontosVitoria} pontos`);
-
   setTimeout(async () => {
-    // cria ordem aleatória
-    let participantes = Object.keys(partida.jogadores); // quem votou
+    let participantes = Object.keys(partida.jogadores);
     if(partida.fila.length === 0) partida.fila = participantes;
     partida.fila = partida.fila.sort(()=>Math.random()-0.5);
     chat.sendMessage(`Ordem: ${partida.fila.map((f,i)=> `${i+1}. @${f.split('@')[0]}`).join('\n')}`);
@@ -150,17 +137,13 @@ async function passarVez(){
   if(!partida) return;
   let idVez = partida.fila[partida.indiceVez];
   if(!idVez){ verificarVencedor(); return; }
-
   let j = partida.jogadores[idVez];
   if(!j){ partida.indiceVez = (partida.indiceVez+1)%partida.fila.length; return passarVez(); }
-
   j.vez = true;
   client.sendMessage(partida.grupoId, `👉 Vez de @${idVez.split('@')[0]}! Mande no meu PV: NOME | EMOJI (10min)`);
   client.sendMessage(idVez, 'Sua vez! Mande: NOME DO FILME | EMOJI\nEx: Rei Leao | 🦁👑');
-
-  // timer 10 min + timer 5 min offline
   setTimeout(() => {
-    if(j.vez){ // não enviou
+    if(j.vez){
       j.pontos -= 1;
       j.faltas += 1;
       client.sendMessage(partida.grupoId, `⏰ @${idVez.split('@')[0]} atrasou! -1 ponto`);
@@ -173,37 +156,32 @@ async function passarVez(){
       proximo();
     }
   }, 10*60*1000);
-
   setTimeout(async () => {
     if(j.vez){
       let chat = await client.getChatById(partida.grupoId);
       let poll = await chat.sendMessage(`@${idVez.split('@')[0]} offline? Expulsar?`, { poll: { name: `Expulsar ${idVez.split('@')[0]} por offline?`, options: ['Sim','Não'] } });
       setTimeout(async () => {
-        let votos = await poll.getVotes();
-        if((votos[0]||0) / (chat.participants.length-1) >= 0.51) expulsar(idVez, chat, 'offline');
+        try {
+          let votos = await poll.getVotes();
+          if((votos[0]||0) / (chat.participants.length-1) >= 0.51) expulsar(idVez, chat, 'offline');
+        } catch {}
       }, 2*60*1000);
     }
   }, 5*60*1000);
 }
 
-function verificarAcerto(grupoId){
-  // lógica de quem acertou fica no on message que detecta nome igual
-}
-
+function verificarAcerto(grupoId){}
 function proximo(){ partida.indiceVez = (partida.indiceVez+1)%partida.fila.length; passarVez(); }
-
 function expulsar(id, chat, motivo){
   partida.expulsos[id] = true;
   delete partida.jogadores[id];
   partida.fila = partida.fila.filter(f=>f!==id);
   chat.sendMessage(`🚫 @${id.split('@')[0]} expulso! Motivo: ${motivo}`);
 }
-
 function enviarPlacar(){
   let txt = Object.values(partida.jogadores).map(j=> `${j.nome.split('@')[0]}: ${j.pontos}pts`).join('\n');
   client.sendMessage(partida.grupoId, `🏆 PLACAR ATUALIZADO:\n${txt}`);
 }
-
 function verificarVencedor(){
   let vencedor = Object.values(partida.jogadores).find(j=>j.pontos >= partida.pontosVitoria);
   if(vencedor){
@@ -211,11 +189,7 @@ function verificarVencedor(){
     fs.writeFileSync('placar_final.txt', txt);
     client.sendMessage(partida.grupoId, `🎉 VENCEDOR: @${vencedor.nome.split('@')[0]}!`, { mentions: [vencedor.nome] });
     client.sendMessage(partida.grupoId, fs.readFileSync('placar_final.txt', 'utf8'));
-    partida = null; // zera e não mantém jogadores - REGRA 3
+    partida = null;
   }
 }
-
-client.initialize();
-});
-
 client.initialize();
